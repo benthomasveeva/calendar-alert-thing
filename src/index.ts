@@ -1,9 +1,10 @@
+import * as readline from "readline";
 import type { OAuth2Client } from "google-auth-library";
 import { getAuthenticatedClient, getCredentialsPath } from "./auth.js";
 import { fetchUpcomingMeetings, getNextPollTime } from "./calendar.js";
 import { MeetingTracker } from "./meeting-tracker.js";
 import { createLogger } from "./logger.js";
-import type { Config, Logger } from "./types.js";
+import type { Config, Logger, MeetingEvent } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
 
 /**
@@ -85,6 +86,97 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Find meetings in the current 15-minute block that are eligible for manual commands.
+ * "Current block" means: from now until the end of the current 15-minute interval.
+ */
+function getMeetingsInCurrentBlock(meetings: MeetingEvent[]): MeetingEvent[] {
+  const now = new Date();
+  const blockEnd = new Date(now);
+  // Round up to the next 15-minute mark
+  const minutesToNext15 = 15 - (now.getMinutes() % 15);
+  blockEnd.setMinutes(now.getMinutes() + minutesToNext15);
+  blockEnd.setSeconds(0);
+  blockEnd.setMilliseconds(0);
+
+  return meetings.filter(
+    (m) => m.startTime >= now && m.startTime <= blockEnd,
+  );
+}
+
+/**
+ * Set up line-mode keyboard input for manual look/join commands.
+ */
+function setupKeyboardInput(
+  auth: OAuth2Client,
+  config: Config,
+  tracker: MeetingTracker,
+  logger: Logger,
+): void {
+  const rl = readline.createInterface({ input: process.stdin });
+
+  rl.on("line", async (line) => {
+    const cmd = line.trim().toLowerCase();
+
+    if (cmd === "l") {
+      logger.info("Manual look: fetching meetings...");
+      try {
+        const meetings = await fetchUpcomingMeetings(auth, config, logger);
+        const inBlock = getMeetingsInCurrentBlock(meetings);
+        if (inBlock.length === 0) {
+          logger.info("No meetings found in the current 15-minute block.");
+        } else {
+          await tracker.processMeetings(inBlock);
+        }
+      } catch (error) {
+        logger.error("Error fetching meetings", error);
+      }
+    } else if (cmd === "j") {
+      logger.info("Manual join: fetching meetings...");
+      try {
+        const meetings = await fetchUpcomingMeetings(auth, config, logger);
+        const inBlock = getMeetingsInCurrentBlock(meetings);
+
+        if (inBlock.length === 0) {
+          logger.info("No meetings found in the current 15-minute block.");
+          return;
+        }
+
+        // Clear dismissed state so 'j' can un-dismiss
+        for (const meeting of inBlock) {
+          tracker.clearDismissed(meeting.id);
+        }
+
+        // Filter to meetings not already scheduled or joined
+        const tracked = tracker.getTrackedMeetings();
+        const trackedIds = new Set(
+          tracked
+            .filter((t) => t.status === "scheduled_join" || t.status === "joined")
+            .map((t) => t.event.id),
+        );
+        const eligible = inBlock.filter((m) => !trackedIds.has(m.id));
+
+        if (eligible.length === 0) {
+          logger.info("No eligible meetings — already scheduled or joined.");
+        } else if (eligible.length > 1) {
+          logger.info(
+            `Found ${eligible.length} meetings — use 'l' to pick one:`,
+          );
+          for (const m of eligible) {
+            logger.info(`  • ${m.summary} at ${m.startTime.toLocaleTimeString()}`);
+          }
+        } else {
+          tracker.scheduleAutoJoinDirect(eligible[0]);
+        }
+      } catch (error) {
+        logger.error("Error fetching meetings", error);
+      }
+    }
+  });
+
+  logger.info("Commands: 'l' + Enter to look ahead, 'j' + Enter to auto-join");
+}
+
+/**
  * Main polling loop.
  */
 async function runPollingLoop(
@@ -103,6 +195,8 @@ async function runPollingLoop(
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+
+  setupKeyboardInput(auth, config, tracker, logger);
 
   logger.info("Calendar Alert started. Watching for meetings...");
   logger.info(`Notify ${config.notifyMinutesBefore} minutes before meetings`);

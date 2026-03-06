@@ -53,7 +53,7 @@ export async function showMeetingNotification(
     end tell
   `;
 
-  logger.verbose(`Showing notification for: ${event.summary}`);
+  logger.verbose(`Showing notification for: ${event.summary} (timeout: ${secondsUntilStart}s)`);
 
   try {
     const { stdout } = await execFileAsync("osascript", ["-e", appleScript]);

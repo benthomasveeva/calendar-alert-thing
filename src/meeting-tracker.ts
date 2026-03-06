@@ -177,6 +177,29 @@ export class MeetingTracker {
   }
 
   /**
+   * Schedule auto-join for a meeting directly, without showing a notification.
+   * Used by the manual 'j' command.
+   */
+  scheduleAutoJoinDirect(meeting: MeetingEvent): void {
+    this.trackedMeetings.set(meeting.id, {
+      event: meeting,
+      status: "pending",
+    });
+    this.scheduleAutoJoin(meeting);
+  }
+
+  /**
+   * Clear dismissed status for a meeting so it can be re-evaluated.
+   * Used by the manual 'j' command to allow un-dismissing.
+   */
+  clearDismissed(meetingId: string): void {
+    const tracked = this.trackedMeetings.get(meetingId);
+    if (tracked?.status === "dismissed") {
+      this.trackedMeetings.delete(meetingId);
+    }
+  }
+
+  /**
    * Get the current status of all tracked meetings.
    */
   getTrackedMeetings(): TrackedMeeting[] {
