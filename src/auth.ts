@@ -215,6 +215,41 @@ export async function getAuthenticatedClient(
 }
 
 /**
+ * Check whether an error represents an authentication/authorization failure
+ * (e.g. expired or revoked token) as opposed to a transient network issue.
+ */
+export function isAuthError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const err = error as {
+    code?: number | string;
+    status?: number;
+    response?: { status?: number };
+    message?: string;
+  };
+
+  const status =
+    err.response?.status ??
+    err.status ??
+    (typeof err.code === "number" ? err.code : undefined);
+
+  if (status === 401 || status === 403) {
+    return true;
+  }
+
+  const message = err.message?.toLowerCase() ?? "";
+  return (
+    message.includes("invalid_grant") ||
+    message.includes("invalid credentials") ||
+    message.includes("unauthorized") ||
+    message.includes("no refresh token") ||
+    message.includes("token has been expired or revoked")
+  );
+}
+
+/**
  * Get the path where credentials should be stored.
  */
 export function getCredentialsPath(): string {

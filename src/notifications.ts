@@ -100,6 +100,35 @@ export async function showSimpleNotification(
 }
 
 /**
+ * Show a blocking dialog alerting the user that authentication has failed.
+ * Unlike showSimpleNotification, this uses a dialog (not a banner) so it's
+ * much more likely to be seen even if the app is running in the background.
+ */
+export async function showAuthFailureNotification(logger: Logger): Promise<void> {
+  const title = "Calendar Alert: Authentication Failed";
+  const message =
+    "Calendar Alert lost access to your Google Calendar and can't check for meetings. Please restart the app and re-authenticate.";
+
+  const appleScript = `
+    tell application "System Events"
+      display dialog "${message.replace(/"/g, '\\"')}" ¬
+        with title "${title.replace(/"/g, '\\"')}" ¬
+        buttons {"OK"} ¬
+        default button "OK" ¬
+        with icon caution
+    end tell
+  `;
+
+  logger.verbose("Showing auth failure notification");
+
+  try {
+    await execFileAsync("osascript", ["-e", appleScript]);
+  } catch (error) {
+    logger.error("Failed to show auth failure notification", error);
+  }
+}
+
+/**
  * Show a notification when auto-joining a meeting.
  */
 export async function showJoiningNotification(

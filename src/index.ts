@@ -1,8 +1,9 @@
 import * as readline from "readline";
 import type { OAuth2Client } from "google-auth-library";
-import { getAuthenticatedClient, getCredentialsPath } from "./auth.js";
+import { getAuthenticatedClient, getCredentialsPath, isAuthError } from "./auth.js";
 import { fetchUpcomingMeetings, getNextPollTime } from "./calendar.js";
 import { MeetingTracker } from "./meeting-tracker.js";
+import { showAuthFailureNotification } from "./notifications.js";
 import { createLogger } from "./logger.js";
 import type { Config, Logger, MeetingEvent } from "./types.js";
 import { DEFAULT_CONFIG } from "./types.js";
@@ -177,6 +178,21 @@ function setupKeyboardInput(
 }
 
 /**
+ * Handle a fatal authentication failure: alert the user with a popup (since
+ * the app may be running in the background and logs may go unseen) and
+ * shut down, since the app can't recover from this without a restart.
+ */
+async function handleAuthFailure(
+  tracker: MeetingTracker,
+  logger: Logger,
+): Promise<void> {
+  logger.error("Authentication has failed. Please restart the app and re-authenticate.");
+  await showAuthFailureNotification(logger);
+  tracker.shutdown();
+  process.exit(1);
+}
+
+/**
  * Main polling loop.
  */
 async function runPollingLoop(
@@ -210,6 +226,9 @@ async function runPollingLoop(
     await tracker.processMeetings(meetings);
   } catch (error) {
     logger.error("Error fetching meetings", error);
+    if (isAuthError(error)) {
+      await handleAuthFailure(tracker, logger);
+    }
   }
 
   // Then poll on schedule
@@ -226,7 +245,10 @@ async function runPollingLoop(
       await tracker.processMeetings(meetings);
     } catch (error) {
       logger.error("Error fetching meetings", error);
-      // Continue polling even if there's an error
+      if (isAuthError(error)) {
+        await handleAuthFailure(tracker, logger);
+      }
+      // Continue polling even if there's a non-auth error
     }
   }
 }
@@ -245,6 +267,9 @@ async function main(): Promise<void> {
     await runPollingLoop(auth, config, logger);
   } catch (error) {
     logger.error("Fatal error", error);
+    if (isAuthError(error)) {
+      await showAuthFailureNotification(logger);
+    }
     process.exit(1);
   }
 }
